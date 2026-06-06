@@ -3,9 +3,11 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSplitter,
@@ -15,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from ui.block_workspace import BlockProgramEditor, BlockSpec, FieldSpec
 from engine.class_manager import ClassManager
+from engine.task2_cpp_exporter import export_task2_cpp_project
 from engine.warcraft_engine import (
     BLUE_PRODUCTION_ORDER,
     RED_PRODUCTION_ORDER,
@@ -36,6 +39,7 @@ class Task2Widget(QWidget):
         self.manager = manager or ClassManager.get_instance()
         self.engine: WarcraftEngine | None = None
         self.last_bundle = None
+        self.last_context: dict[str, object] | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -61,12 +65,15 @@ class Task2Widget(QWidget):
         self.example_btn = QPushButton("加载推荐积木")
         self.run_btn = QPushButton("执行模拟脚本")
         self.run_btn.setObjectName("btnPrimary")
+        self.export_cpp_btn = QPushButton("导出 C++ 单文件")
         self.clear_btn = QPushButton("清空结果")
         self.example_btn.clicked.connect(self.load_example_script)
         self.run_btn.clicked.connect(self.run_script)
+        self.export_cpp_btn.clicked.connect(self.export_cpp_project)
         self.clear_btn.clicked.connect(self.clear_outputs)
         action_row.addWidget(self.example_btn)
         action_row.addWidget(self.run_btn)
+        action_row.addWidget(self.export_cpp_btn)
         action_row.addWidget(self.clear_btn)
         action_row.addStretch(1)
         main_layout.addLayout(action_row)
@@ -288,10 +295,43 @@ class Task2Widget(QWidget):
             prefix = "[通过]" if ok else "[错误]"
             logs.append(f"{prefix} 积木 {index}: {message}")
 
+        self.last_context = context
+        self.engine = context.get("engine") if isinstance(context.get("engine"), WarcraftEngine) else None
         self.log_output.setPlainText("\n".join(logs))
         self._render_context(context)
         self.summary_label.setText(context.get("last_note", "模拟脚本执行结束。"))
         self.summary_label.setStyleSheet("font-weight: 700; color: #4F46E5;")
+
+    def export_cpp_project(self) -> None:
+        if self.last_context is None:
+            QMessageBox.warning(self, "导出失败", "请先执行一次模拟脚本，再导出当前 Task2 的 C++ 工程。")
+            return
+
+        config = self.last_context.get("config")
+        schedule = self.last_context.get("schedule")
+        if not isinstance(config, WarcraftConfig) or not hasattr(schedule, "get_enabled_slots"):
+            QMessageBox.warning(self, "导出失败", "当前没有可用的 Task2 Case 配置，请先重新执行模拟脚本。")
+            return
+
+        directory = QFileDialog.getExistingDirectory(self, "选择 C++ 工程导出目录")
+        if not directory:
+            return
+
+        try:
+            exported_files = export_task2_cpp_project(directory, config, schedule)
+            self.summary_label.setText(f"Task2 C++ 单文件已导出到：{directory}")
+            self.summary_label.setStyleSheet("font-weight: 700; color: #059669;")
+            QMessageBox.information(
+                self,
+                "导出成功",
+                "已导出 Task2 独立 C++ 题解到：\n"
+                f"{directory}\n\n"
+                "task2_solution.cpp 是可直接提交 OJ 的单文件。\n\n"
+                "包含文件：\n"
+                + "\n".join(exported_files),
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "导出失败", str(exc))
 
     def _execute_block(self, context: dict[str, object], key: str, fields: dict[str, object]) -> tuple[bool, str]:
         config = context.get("config")
