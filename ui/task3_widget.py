@@ -3,9 +3,12 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
+    QComboBox,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QSplitter,
@@ -14,10 +17,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ui.block_workspace import BlockProgramEditor, BlockSpec, FieldSpec
+from engine.ai_log_assistant import build_model_config, explain_log_mismatch, get_model_names
 from engine.class_manager import ClassManager
-from engine.task3_log_helper import build_log_text, compare_logs, filter_events, summarize_bundle
+from engine.task3_log_helper import LogComparison, build_log_text, compare_logs, filter_events, summarize_bundle
 from engine.warcraft_engine import STANDARD_STAGE_DEFINITIONS, SimulationBundle
+from ui.block_workspace import BlockProgramEditor, BlockSpec, FieldSpec
+from ui.timeline_controller import TimelineController
+from ui.timeline_panel import TimelinePanel
 
 
 class Task3Widget(QWidget):
@@ -25,6 +31,8 @@ class Task3Widget(QWidget):
         super().__init__()
         self.manager = manager or ClassManager.get_instance()
         self.imported_bundle: SimulationBundle | None = None
+        self.last_comparison: LogComparison | None = None
+        self.timeline_controller: TimelineController | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -39,7 +47,8 @@ class Task3Widget(QWidget):
         title.setFont(title_font)
 
         subtitle = QLabel(
-            "Task3 只负责消费 Task2 导出的整局事件流。可以生成标准日志，也可以基于自定义教学模式筛选小时、阶段和关键词。"
+            "Task3 消费 Task2 导出的整局事件流。可以生成标准日志、筛选局部事件、对比学生输出，"
+            "并在提供 API Key 后让 AI 辅助定位格式或逻辑错误。"
         )
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("color: #94A3B8; font-size: 13px;")
@@ -51,12 +60,19 @@ class Task3Widget(QWidget):
         self.run_btn = QPushButton("执行日志脚本")
         self.run_btn.setObjectName("btnPrimary")
         self.clear_btn = QPushButton("清空差异视图")
+        self.ai_btn = QPushButton("AI 分析差异")
+        self.example_btn.setToolTip("自动填入导入、生成日志、对拍输出的推荐流程。")
+        self.run_btn.setToolTip("按左侧积木顺序生成标准日志并对拍你的输出。")
+        self.clear_btn.setToolTip("清空右侧日志、差异和 AI 建议，不删除左侧积木脚本。")
+        self.ai_btn.setToolTip("在存在差异时，用所选模型辅助定位原因。")
         self.example_btn.clicked.connect(self.load_example_script)
         self.run_btn.clicked.connect(self.run_script)
         self.clear_btn.clicked.connect(self.clear_outputs)
+        self.ai_btn.clicked.connect(self.run_ai_debug)
         action_row.addWidget(self.example_btn)
         action_row.addWidget(self.run_btn)
         action_row.addWidget(self.clear_btn)
+        action_row.addWidget(self.ai_btn)
         action_row.addStretch(1)
         main_layout.addLayout(action_row)
 
@@ -64,8 +80,9 @@ class Task3Widget(QWidget):
         self.block_editor = BlockProgramEditor(self._build_block_specs())
         splitter.addWidget(self.block_editor)
         splitter.addWidget(self._build_result_panel())
-        splitter.setSizes([860, 520])
+        splitter.setSizes([860, 560])
         main_layout.addWidget(splitter)
+        self._refresh_ai_button_state()
 
     def _build_result_panel(self) -> QWidget:
         container = QWidget()
@@ -79,10 +96,39 @@ class Task3Widget(QWidget):
         self.summary_label.setStyleSheet("font-weight: 700; color: #4F46E5;")
         layout.addWidget(self.summary_label)
 
-        process_group = QGroupBox("解释执行日志")
+        timeline_group = QGroupBox("导入事件时间轴")
+        timeline_layout = QVBoxLayout(timeline_group)
+        self.timeline_panel = TimelinePanel(
+            "Task3 对拍时间轴",
+            "从 Task2 导入事件后，这里会显示同一条事件流，便于按时间定位日志差异。",
+        )
+        self.timeline_controller = TimelineController(self.timeline_panel)
+        self.timeline_controller.eventSelected.connect(self.focus_timeline_event)
+        timeline_layout.addWidget(self.timeline_panel)
+        layout.addWidget(timeline_group, 1)
+
+        ai_group = QGroupBox("AI 调错助手")
+        ai_layout = QFormLayout(ai_group)
+        self.ai_model_combo = QComboBox()
+        self.ai_model_combo.addItems(get_model_names())
+        self.ai_key_edit = QLineEdit()
+        self.ai_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.ai_key_edit.setPlaceholderText("填写 API Key，仅用于本次请求，不会保存")
+        self.ai_model_override_edit = QLineEdit()
+        self.ai_model_override_edit.setPlaceholderText("可选：覆盖模型名，例如 deepseek-chat")
+        self.ai_base_url_edit = QLineEdit()
+        self.ai_base_url_edit.setPlaceholderText("可选：OpenAI 兼容接口地址")
+        ai_layout.addRow("模型", self.ai_model_combo)
+        ai_layout.addRow("API Key", self.ai_key_edit)
+        ai_layout.addRow("模型名", self.ai_model_override_edit)
+        ai_layout.addRow("接口地址", self.ai_base_url_edit)
+        layout.addWidget(ai_group)
+
+        process_group = QGroupBox("脚本执行日志")
         process_layout = QVBoxLayout(process_group)
         self.process_output = QPlainTextEdit()
         self.process_output.setReadOnly(True)
+        self.process_output.setPlaceholderText("执行日志脚本后，这里会显示每个积木的处理结果。")
         process_layout.addWidget(self.process_output)
         layout.addWidget(process_group)
 
@@ -92,6 +138,7 @@ class Task3Widget(QWidget):
         expected_layout = QVBoxLayout(expected_group)
         self.expected_output = QPlainTextEdit()
         self.expected_output.setReadOnly(True)
+        self.expected_output.setPlaceholderText("生成标准日志后会显示在这里。")
         expected_layout.addWidget(self.expected_output)
 
         actual_group = QGroupBox("你的输出")
@@ -108,8 +155,17 @@ class Task3Widget(QWidget):
         diff_layout = QVBoxLayout(diff_group)
         self.diff_view = QTextEdit()
         self.diff_view.setReadOnly(True)
+        self.diff_view.setPlaceholderText("执行“对比我的输出”后，这里会显示逐行差异。")
         diff_layout.addWidget(self.diff_view)
         layout.addWidget(diff_group, 1)
+
+        ai_result_group = QGroupBox("AI 调错建议")
+        ai_result_layout = QVBoxLayout(ai_result_group)
+        self.ai_output = QPlainTextEdit()
+        self.ai_output.setReadOnly(True)
+        self.ai_output.setPlaceholderText("先执行日志脚本并产生差异，再点击“AI 分析差异”。")
+        ai_result_layout.addWidget(self.ai_output)
+        layout.addWidget(ai_result_group, 1)
         return container
 
     def _build_block_specs(self) -> list[BlockSpec]:
@@ -131,7 +187,7 @@ class Task3Widget(QWidget):
                 key="filter_hour",
                 title="按小时筛选",
                 color="#16A34A",
-                description="只保留某个小时内的事件，用来单独查看 0 点、1 点等局部输出。",
+                description="只保留某个小时内的事件，用来单独查看局部输出。",
                 fields=[
                     FieldSpec("hour", "小时", "int", 0, minimum=0, maximum=100, width=140),
                 ],
@@ -140,7 +196,7 @@ class Task3Widget(QWidget):
                 key="filter_stage",
                 title="按阶段筛选",
                 color="#22C55E",
-                description="只保留某类阶段，如 spawn / march / battle。",
+                description="只保留某类阶段，例如 spawn / march / battle。",
                 fields=[
                     FieldSpec("stage_key", "阶段", "combo", stage_keys[0], stage_keys, editable=False, width=170),
                 ],
@@ -181,19 +237,28 @@ class Task3Widget(QWidget):
             {"key": "generate_log", "fields": {}},
             {"key": "compare_output", "fields": {}},
         ])
+        self.summary_label.setText("已加载推荐积木。下一步先从 Task2 导入事件，再点击“执行日志脚本”。")
+        self.summary_label.setStyleSheet("font-weight: 700; color: #4F46E5;")
 
     def clear_outputs(self) -> None:
         self.process_output.clear()
         self.expected_output.clear()
         self.diff_view.clear()
-        self.summary_label.setText("输出已清空。")
+        self.ai_output.clear()
+        self.last_comparison = None
+        if self.timeline_controller is not None and self.imported_bundle is None:
+            self.timeline_controller.set_events([])
+        self.summary_label.setText("输出已清空。导入结果和左侧脚本仍保留，可继续对拍。")
         self.summary_label.setStyleSheet("font-weight: 700; color: #4F46E5;")
+        self._refresh_ai_button_state()
 
     def load_simulation_bundle(self, bundle: object) -> None:
         if not isinstance(bundle, SimulationBundle):
             self.imported_bundle = None
             self.import_status_label.setText("收到的数据不是合法的 Task2 模拟结果。")
             self.import_status_label.setStyleSheet("font-weight: 700; color: #DC2626;")
+            if self.timeline_controller is not None:
+                self.timeline_controller.set_events([])
             return
         self.imported_bundle = bundle
         self.import_status_label.setText(
@@ -201,6 +266,27 @@ class Task3Widget(QWidget):
         )
         self.import_status_label.setStyleSheet("font-weight: 700; color: #4F46E5;")
         self.process_output.setPlainText(summarize_bundle(bundle))
+        if self.timeline_controller is not None:
+            self.timeline_controller.load_simulation_bundle(bundle)
+        self.summary_label.setText("Task2 事件已导入。下一步加载推荐积木或执行已有日志脚本。")
+        self.summary_label.setStyleSheet("font-weight: 700; color: #4F46E5;")
+        self._refresh_ai_button_state()
+
+    def focus_timeline_event(self, index: int, event: object) -> None:
+        event_time = getattr(event, "display_time", "--:--")
+        stage_key = getattr(event, "stage_key", "unknown")
+        description = getattr(event, "description", str(event))
+        self.summary_label.setText(f"时间轴已定位到事件 #{index + 1}：{event_time} / {stage_key}。")
+        self.summary_label.setStyleSheet("font-weight: 700; color: #4F46E5;")
+        if self.expected_output.toPlainText().strip():
+            matching_line = event.to_log_line() if hasattr(event, "to_log_line") else description
+            self.diff_view.setHtml(
+                "<div style='font-family:Consolas,monospace; padding:10px;'>"
+                f"<b>当前时间轴事件 #{index + 1}</b><br>"
+                f"时间：{event_time}<br>阶段：{stage_key}<br>"
+                f"<pre style='white-space:pre-wrap;'>{matching_line}</pre>"
+                "</div>"
+            )
 
     def run_script(self) -> None:
         script = self.block_editor.get_script()
@@ -217,6 +303,7 @@ class Task3Widget(QWidget):
         messages: list[str] = []
         last_summary = "日志脚本执行结束。"
         last_html = ""
+        self.last_comparison = None
 
         for index, block in enumerate(script, start=1):
             ok, message, summary, html = self._execute_block(context, str(block.get("key", "")), block.get("fields", {}))
@@ -235,6 +322,54 @@ class Task3Widget(QWidget):
         if "差异" in last_summary:
             color = "#DC2626"
         self.summary_label.setStyleSheet(f"font-weight: 700; color: {color};")
+        self._refresh_ai_button_state()
+
+    def run_ai_debug(self) -> None:
+        expected_text = self.expected_output.toPlainText()
+        actual_text = self.actual_output.toPlainText()
+        if not expected_text.strip():
+            self.ai_output.setPlainText("请先执行日志脚本，生成当前标准日志。")
+            self._refresh_ai_button_state()
+            return
+        comparison = self.last_comparison or compare_logs(expected_text, actual_text)
+        if comparison.matched:
+            self.ai_output.setPlainText("输出已经完全一致，不需要 AI 调错。")
+            self._refresh_ai_button_state()
+            return
+        try:
+            config = build_model_config(
+                self.ai_model_combo.currentText(),
+                self.ai_key_edit.text(),
+                model_override=self.ai_model_override_edit.text(),
+                base_url_override=self.ai_base_url_edit.text(),
+            )
+        except ValueError as exc:
+            self.ai_output.setPlainText(str(exc))
+            return
+
+        self.ai_output.setPlainText("正在请求 AI 分析，请稍候...")
+        result = explain_log_mismatch(
+            config,
+            comparison,
+            expected_text=expected_text,
+            actual_text=actual_text,
+        )
+        if result.ok:
+            self.ai_output.setPlainText(result.suggestion)
+        else:
+            self.ai_output.setPlainText(result.message + ("\n\n" + result.suggestion if result.suggestion else ""))
+        self._refresh_ai_button_state()
+
+    def _refresh_ai_button_state(self) -> None:
+        has_expected = bool(self.expected_output.toPlainText().strip())
+        has_mismatch = self.last_comparison is not None and not self.last_comparison.matched
+        self.ai_btn.setEnabled(has_expected and has_mismatch)
+        if not has_expected:
+            self.ai_btn.setToolTip("先执行日志脚本生成标准日志。")
+        elif not has_mismatch:
+            self.ai_btn.setToolTip("只有存在对拍差异时才需要 AI 分析。")
+        else:
+            self.ai_btn.setToolTip("使用所选模型分析当前日志差异。")
 
     def _execute_block(self, context: dict[str, object], key: str, fields: dict[str, object]) -> tuple[bool, str, str, str]:
         bundle = context.get("bundle")
@@ -285,6 +420,7 @@ class Task3Widget(QWidget):
             if not log_text.strip():
                 return False, "请先生成当前日志。", "", ""
             comparison = compare_logs(log_text, self.actual_output.toPlainText())
+            self.last_comparison = comparison
             return comparison.matched, comparison.summary, comparison.summary, comparison.html
 
         if key == "reset_filters":
