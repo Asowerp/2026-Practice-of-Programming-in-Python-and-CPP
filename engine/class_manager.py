@@ -103,7 +103,7 @@ class ClassManager:
         lines.append(f"    {cls_def.name}();")
         if cls_def.has_virtual:
             lines.append(f"    virtual ~{cls_def.name}() = default;")
-            lines.append("    virtual void act();")
+            lines.append("    virtual void act() {}")
         lines.append("")
         lines.append("private:")
         if cls_def.members:
@@ -117,8 +117,6 @@ class ClassManager:
         lines.append(f"inline {cls_def.name}::{cls_def.name}()")
         if cls_def.base_class:
             lines.append(f"    : {cls_def.base_class}()")
-        else:
-            lines.append("    :")
         lines.append("{")
         lines.append("}")
         return "\n".join(lines)
@@ -126,7 +124,7 @@ class ClassManager:
     # 将当前所有类统一导出到指定头文件中，便于集中查看或保存生成结果。
     def export_all_cpp(self, file_path: str) -> None:
         content_parts = ["#pragma once", "", "#include <string>", ""]
-        for cls_def in self.get_all_classes():
+        for cls_def in self._get_cpp_export_order():
             content_parts.append(self.generate_cpp_code(cls_def.name))
             content_parts.append("")
         Path(file_path).write_text("\n".join(content_parts), encoding="utf-8")
@@ -136,7 +134,7 @@ class ClassManager:
         output_path.mkdir(parents=True, exist_ok=True)
 
         class_header_lines = ["#pragma once", "", "#include <string>", ""]
-        for cls_def in self.get_all_classes():
+        for cls_def in self._get_cpp_export_order():
             class_header_lines.append(self.generate_cpp_code(cls_def.name))
             class_header_lines.append("")
         (output_path / "classes.h").write_text("\n".join(class_header_lines), encoding="utf-8")
@@ -235,6 +233,32 @@ class ClassManager:
             result.append((member, class_name))
         return result
 
+    # C++ 导出必须保证基类先于派生类出现，否则 `class Derived : public Base` 无法编译。
+    def _get_cpp_export_order(self) -> list[ClassDef]:
+        ordered: list[ClassDef] = []
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(class_name: str) -> None:
+            if class_name in visited:
+                return
+            if class_name in visiting:
+                raise ValueError(f"类继承关系存在循环，无法导出 C++：{class_name}")
+            cls_def = self.get_class(class_name)
+            if cls_def is None:
+                return
+
+            visiting.add(class_name)
+            if cls_def.base_class:
+                visit(cls_def.base_class)
+            visiting.remove(class_name)
+            visited.add(class_name)
+            ordered.append(cls_def)
+
+        for cls_def in self.get_all_classes():
+            visit(cls_def.name)
+        return ordered
+
     # 为指定类创建一个对象实例数据，并为未显式传入的成员补上按类型推断的默认值。
     def create_instance(self, class_name: str, init_values: dict | None = None) -> ObjectInstance:
         init_values = init_values or {}
@@ -319,12 +343,49 @@ class ClassManager:
 
     @staticmethod
     def _build_main_cpp() -> str:
-        return """#include <iostream>
-#include \"game.h\"
+        return """#include <cstddef>
+#include <iostream>
+#include <string>
+#include <vector>
+
+#include "game.h"
 
 int main() {
-    // TODO: 读取输入，构造 Game，并输出事件日志。
-    std::cout << \"Warcraft skeleton project\" << std::endl;
+    int M = 20;
+    int N = 3;
+    int R = 10;
+    int K = 5;
+    int T = 120;
+
+    int first = 0;
+    if (std::cin >> first) {
+        std::vector<int> values;
+        int value = 0;
+        while (std::cin >> value) {
+            values.push_back(value);
+        }
+
+        if (first > 0 && values.size() >= static_cast<std::size_t>(15 * first)) {
+            M = values[0];
+            N = values[1];
+            R = values[2];
+            K = values[3];
+            T = values[4];
+        } else if (values.size() >= 4) {
+            M = first;
+            N = values[0];
+            R = values[1];
+            K = values[2];
+            T = values[3];
+        }
+    }
+
+    Game game;
+    game.initializeCase(M, N, R, K, T);
+    game.run();
+    for (const std::string& line : game.getLogs()) {
+        std::cout << line << '\\n';
+    }
     return 0;
 }
 """
@@ -333,8 +394,12 @@ int main() {
     def _build_game_h() -> str:
         return """#pragma once
 
-#include <vector>
+#include "city.h"
+#include "headquarter.h"
+#include "warrior.h"
+
 #include <string>
+#include <vector>
 
 class Game {
 public:
@@ -344,27 +409,123 @@ public:
     std::vector<std::string> getLogs() const;
 
 private:
-    // TODO: 维护时间轴、司令部、城市和武士集合。
+    int M_;
+    int N_;
+    int R_;
+    int K_;
+    int T_;
+    Headquarter red_;
+    Headquarter blue_;
+    std::vector<City> cities_;
+    std::vector<Warrior> warriors_;
+    std::vector<std::string> logs_;
+
+    void addLog(const std::string& message);
+    void createWarriorFrom(const Headquarter& headquarter);
 };
 """
 
     @staticmethod
     def _build_game_cpp() -> str:
-        return """#include \"game.h\"
+        return """#include "game.h"
 
-Game::Game() = default;
+#include <string>
+#include <vector>
+
+Game::Game()
+    : M_(0), N_(0), R_(0), K_(0), T_(0), red_("red", 0), blue_("blue", 0) {
+}
 
 void Game::initializeCase(int M, int N, int R, int K, int T) {
-    // TODO: 初始化题面参数和地图状态。
+    M_ = M;
+    N_ = N;
+    R_ = R;
+    K_ = K;
+    T_ = T;
+    red_ = Headquarter("red", M_);
+    blue_ = Headquarter("blue", M_);
+    cities_.clear();
+    warriors_.clear();
+    logs_.clear();
+
+    for (int id = 1; id <= N_; ++id) {
+        cities_.emplace_back(id);
+    }
+
+    addLog("Case 1:");
+    addLog("config M=" + std::to_string(M_) + " N=" + std::to_string(N_) +
+           " R=" + std::to_string(R_) + " K=" + std::to_string(K_) +
+           " T=" + std::to_string(T_));
 }
 
 void Game::run() {
-    // TODO: 按 00/05/10/20/30/35/38/40/50/55 的分钟点推进整局模拟。
+    const std::vector<std::string> red_order = {"iceman", "lion", "wolf", "ninja", "dragon"};
+    const std::vector<std::string> blue_order = {"lion", "dragon", "ninja", "iceman", "wolf"};
+    const std::vector<int> warrior_costs = {20, 20, 30, 10, 15};
+
+    for (int hour = 0; hour * 60 <= T_; ++hour) {
+        const int base = hour * 60;
+        addLog(red_.tryProduceWarrior(base, red_order, warrior_costs));
+        addLog(blue_.tryProduceWarrior(base, blue_order, warrior_costs));
+        createWarriorFrom(red_);
+        createWarriorFrom(blue_);
+
+        if (base + 10 <= T_) {
+            for (Warrior& warrior : warriors_) {
+                if (warrior.alive()) {
+                    addLog(warrior.march(base + 10, N_));
+                }
+            }
+        }
+
+        if (base + 20 <= T_) {
+            for (City& city : cities_) {
+                addLog(city.produceElements(base + 20));
+            }
+        }
+
+        if (base + 40 <= T_) {
+            for (City& city : cities_) {
+                addLog(city.resolveBattle(base + 40));
+            }
+        }
+
+        if (base + 50 <= T_) {
+            addLog(red_.reportElements(base + 50));
+            addLog(blue_.reportElements(base + 50));
+        }
+
+        if (base + 55 <= T_) {
+            for (const Warrior& warrior : warriors_) {
+                if (warrior.alive()) {
+                    addLog(warrior.reportWeapons(base + 55));
+                }
+            }
+        }
+    }
 }
 
 std::vector<std::string> Game::getLogs() const {
-    // TODO: 返回完整标准输出。
-    return {};
+    return logs_;
+}
+
+void Game::addLog(const std::string& message) {
+    logs_.push_back(message);
+}
+
+void Game::createWarriorFrom(const Headquarter& headquarter) {
+    if (!headquarter.producedThisTurn()) {
+        return;
+    }
+    const int start_position = headquarter.camp() == "red" ? 0 : N_ + 1;
+    warriors_.emplace_back(
+        headquarter.totalWarriors(),
+        20,
+        K_,
+        headquarter.camp(),
+        headquarter.lastProducedKind(),
+        start_position
+    );
 }
 """
 
@@ -373,35 +534,95 @@ std::vector<std::string> Game::getLogs() const {
         return """#pragma once
 
 #include <string>
+#include <vector>
 
 class Headquarter {
 public:
-    Headquarter(std::string camp, int elements);
-    void tryProduceWarrior();
-    void reportElements() const;
+    Headquarter(std::string camp = "red", int elements = 0);
+    std::string tryProduceWarrior(int minute, const std::vector<std::string>& order, const std::vector<int>& costs);
+    std::string reportElements(int minute) const;
+    bool producedThisTurn() const;
+    const std::string& lastProducedKind() const;
+    const std::string& camp() const;
+    int totalWarriors() const;
 
 private:
     std::string camp_;
     int elements_;
     int nextIndex_;
     int totalWarriors_;
+    bool producedThisTurn_;
+    std::string lastProducedKind_;
+
+    static std::string formatTime(int minute);
 };
 """
 
     @staticmethod
     def _build_headquarter_cpp() -> str:
-        return """#include \"headquarter.h\"
+        return """#include "headquarter.h"
+
+#include <iomanip>
+#include <sstream>
+#include <utility>
 
 Headquarter::Headquarter(std::string camp, int elements)
-    : camp_(std::move(camp)), elements_(elements), nextIndex_(0), totalWarriors_(0) {
+    : camp_(std::move(camp)),
+      elements_(elements),
+      nextIndex_(0),
+      totalWarriors_(0),
+      producedThisTurn_(false),
+      lastProducedKind_() {
 }
 
-void Headquarter::tryProduceWarrior() {
-    // TODO: 按红蓝固定序列尝试造兵，若生命元不足则等待下一个整点。
+std::string Headquarter::tryProduceWarrior(int minute, const std::vector<std::string>& order, const std::vector<int>& costs) {
+    producedThisTurn_ = false;
+    if (order.empty() || costs.empty()) {
+        return formatTime(minute) + " " + camp_ + " headquarter has no production rule";
+    }
+
+    const int attempts = static_cast<int>(order.size());
+    for (int offset = 0; offset < attempts; ++offset) {
+        const int index = (nextIndex_ + offset) % attempts;
+        const int cost = costs[index % static_cast<int>(costs.size())];
+        if (elements_ >= cost) {
+            elements_ -= cost;
+            nextIndex_ = (index + 1) % attempts;
+            ++totalWarriors_;
+            producedThisTurn_ = true;
+            lastProducedKind_ = order[index];
+            return formatTime(minute) + " " + camp_ + " " + lastProducedKind_ + " " +
+                   std::to_string(totalWarriors_) + " born";
+        }
+    }
+    return formatTime(minute) + " " + camp_ + " headquarter waits";
 }
 
-void Headquarter::reportElements() const {
-    // TODO: 输出 50 分司令部生命元报告。
+std::string Headquarter::reportElements(int minute) const {
+    return formatTime(minute) + " " + std::to_string(elements_) + " elements in " + camp_ + " headquarter";
+}
+
+bool Headquarter::producedThisTurn() const {
+    return producedThisTurn_;
+}
+
+const std::string& Headquarter::lastProducedKind() const {
+    return lastProducedKind_;
+}
+
+const std::string& Headquarter::camp() const {
+    return camp_;
+}
+
+int Headquarter::totalWarriors() const {
+    return totalWarriors_;
+}
+
+std::string Headquarter::formatTime(int minute) {
+    std::ostringstream out;
+    out << std::setw(3) << std::setfill('0') << minute / 60
+        << ':' << std::setw(2) << std::setfill('0') << minute % 60;
+    return out.str();
 }
 """
 
@@ -414,31 +635,56 @@ void Headquarter::reportElements() const {
 class City {
 public:
     explicit City(int id);
-    void produceElements();
-    void resolveBattle();
+    std::string produceElements(int minute);
+    std::string resolveBattle(int minute) const;
+    int id() const;
+    int elements() const;
 
 private:
     int id_;
     int elements_;
     std::string flag_;
     std::string lastWinner_;
+
+    static std::string formatTime(int minute);
 };
 """
 
     @staticmethod
     def _build_city_cpp() -> str:
-        return """#include \"city.h\"
+        return """#include "city.h"
+
+#include <iomanip>
+#include <sstream>
 
 City::City(int id)
     : id_(id), elements_(0) {
 }
 
-void City::produceElements() {
-    // TODO: 20 分产出 10 个生命元。
+std::string City::produceElements(int minute) {
+    elements_ += 10;
+    return formatTime(minute) + " city " + std::to_string(id_) +
+           " produced 10 elements, total " + std::to_string(elements_);
 }
 
-void City::resolveBattle() {
-    // TODO: 40 分处理主动攻击、反击、旗帜和战后生命元结算。
+std::string City::resolveBattle(int minute) const {
+    return formatTime(minute) + " city " + std::to_string(id_) +
+           " checks battle state, flag=" + (flag_.empty() ? "none" : flag_);
+}
+
+int City::id() const {
+    return id_;
+}
+
+int City::elements() const {
+    return elements_;
+}
+
+std::string City::formatTime(int minute) {
+    std::ostringstream out;
+    out << std::setw(3) << std::setfill('0') << minute / 60
+        << ':' << std::setw(2) << std::setfill('0') << minute % 60;
+    return out.str();
 }
 """
 
@@ -450,40 +696,99 @@ void City::resolveBattle() {
 
 class Warrior {
 public:
-    Warrior(int id, int hp, int attack, std::string camp);
+    Warrior(int id, int hp, int attack, std::string camp, std::string kind, int position);
     virtual ~Warrior() = default;
 
-    virtual void march();
-    virtual void reportWeapons() const;
+    virtual std::string march(int minute, int cityCount);
+    virtual std::string reportWeapons(int minute) const;
     virtual bool canCounterattack() const;
+    bool alive() const;
+    const std::string& camp() const;
+    const std::string& kind() const;
 
 protected:
     int id_;
     int hp_;
     int attack_;
     int position_;
+    int steps_;
     std::string camp_;
+    std::string kind_;
+
+    static std::string formatTime(int minute);
 };
 """
 
     @staticmethod
     def _build_warrior_cpp() -> str:
-        return """#include \"warrior.h\"
+        return """#include "warrior.h"
 
-Warrior::Warrior(int id, int hp, int attack, std::string camp)
-    : id_(id), hp_(hp), attack_(attack), position_(0), camp_(std::move(camp)) {
+#include <algorithm>
+#include <iomanip>
+#include <sstream>
+#include <utility>
+
+Warrior::Warrior(int id, int hp, int attack, std::string camp, std::string kind, int position)
+    : id_(id),
+      hp_(hp),
+      attack_(attack),
+      position_(position),
+      steps_(0),
+      camp_(std::move(camp)),
+      kind_(std::move(kind)) {
 }
 
-void Warrior::march() {
-    // TODO: 10 分行军；Iceman 需要在每两步后修改 hp 和 attack。
+std::string Warrior::march(int minute, int cityCount) {
+    position_ += camp_ == "red" ? 1 : -1;
+    ++steps_;
+    if (kind_ == "iceman" && steps_ % 2 == 0) {
+        hp_ = std::max(1, hp_ - 9);
+        attack_ += 20;
+    }
+
+    std::string place = "city " + std::to_string(position_);
+    if (position_ <= 0) {
+        place = "red headquarter";
+    } else if (position_ > cityCount) {
+        place = "blue headquarter";
+    }
+    return formatTime(minute) + " " + camp_ + " " + kind_ + " " +
+           std::to_string(id_) + " marched to " + place;
 }
 
-void Warrior::reportWeapons() const {
-    // TODO: 55 分按 arrow,bomb,sword 顺序报告武器。
+std::string Warrior::reportWeapons(int minute) const {
+    const int weaponIndex = id_ % 3;
+    std::string weapon = "sword(" + std::to_string(std::max(1, attack_ / 5)) + ")";
+    if (weaponIndex == 1) {
+        weapon = "bomb";
+    } else if (weaponIndex == 2) {
+        weapon = "arrow(3)";
+    }
+    return formatTime(minute) + " " + camp_ + " " + kind_ + " " +
+           std::to_string(id_) + " has " + weapon;
 }
 
 bool Warrior::canCounterattack() const {
-    return true;
+    return kind_ != "ninja";
+}
+
+bool Warrior::alive() const {
+    return hp_ > 0;
+}
+
+const std::string& Warrior::camp() const {
+    return camp_;
+}
+
+const std::string& Warrior::kind() const {
+    return kind_;
+}
+
+std::string Warrior::formatTime(int minute) {
+    std::ostringstream out;
+    out << std::setw(3) << std::setfill('0') << minute / 60
+        << ':' << std::setw(2) << std::setfill('0') << minute % 60;
+    return out.str();
 }
 """
 
@@ -491,14 +796,22 @@ bool Warrior::canCounterattack() const {
     def _build_weapon_h() -> str:
         return """#pragma once
 
+#include <string>
+
 class Weapon {
 public:
+    explicit Weapon(std::string name);
     virtual ~Weapon() = default;
+    virtual std::string report() const;
+
+private:
+    std::string name_;
 };
 
 class Sword : public Weapon {
 public:
     explicit Sword(int attack);
+    std::string report() const override;
 
 private:
     int attack_;
@@ -506,12 +819,13 @@ private:
 
 class Bomb : public Weapon {
 public:
-    Bomb() = default;
+    Bomb();
 };
 
 class Arrow : public Weapon {
 public:
     explicit Arrow(int attack);
+    std::string report() const override;
 
 private:
     int attack_;
@@ -521,14 +835,37 @@ private:
 
     @staticmethod
     def _build_weapon_cpp() -> str:
-        return """#include \"weapon.h\"
+        return """#include "weapon.h"
+
+#include <string>
+#include <utility>
+
+Weapon::Weapon(std::string name)
+    : name_(std::move(name)) {
+}
+
+std::string Weapon::report() const {
+    return name_;
+}
 
 Sword::Sword(int attack)
-    : attack_(attack) {
+    : Weapon("sword"), attack_(attack) {
+}
+
+std::string Sword::report() const {
+    return "sword(" + std::to_string(attack_) + ")";
+}
+
+Bomb::Bomb()
+    : Weapon("bomb") {
 }
 
 Arrow::Arrow(int attack)
-    : attack_(attack), uses_(3) {
+    : Weapon("arrow"), attack_(attack), uses_(3) {
+}
+
+std::string Arrow::report() const {
+    return "arrow(" + std::to_string(uses_) + ")";
 }
 """
 
@@ -536,23 +873,73 @@ Arrow::Arrow(int attack)
     def _build_skeleton_readme() -> str:
         return """Warcraft C++ Skeleton
 
-1. classes.h 来自图形化类编辑器导出的当前类定义。
-2. 其余 .h / .cpp 文件是根据 warcraft.txt 题面准备的工程骨架。
-3. 这些文件主要提供类划分、方法签名和 TODO 提示，不保证已经实现完整题解。
-4. 建议从 Game::run() 开始，把时间轴规则逐步补全。
+1. classes.h comes from the current visual class editor model.
+2. The other .h/.cpp files form a runnable modular teaching project.
+3. main.cpp reads either Warriors4-style input or a short M N R K T input; without input it runs a small built-in case.
+4. Module boundaries are explicit: Game owns the timeline, Headquarter owns production, City owns city state, Warrior owns movement and reports, and Weapon owns weapon reports.
+5. This skeleton is for learning and extension. For judge submission, export the OJ single-file solution from Task2.
 """
 
-    # 在管理器为空时填充一组演示类数据，便于界面初次打开即可直接体验功能。
+    # 在管理器为空时填充一组题面导向的默认类数据，便于界面初次打开即可体验完整模块化设计。
     def seed_demo_classes(self) -> None:
         if self._classes:
             return
-        self.add_class(
+        default_classes = [
+            ClassDef(
+                name="Headquarter",
+                members=[
+                    MemberDef("string", "camp"),
+                    MemberDef("int", "elements"),
+                    MemberDef("int", "nextIndex"),
+                    MemberDef("int", "totalWarriors"),
+                ],
+            ),
+            ClassDef(
+                name="City",
+                members=[
+                    MemberDef("int", "id"),
+                    MemberDef("int", "elements"),
+                    MemberDef("string", "flag"),
+                    MemberDef("string", "lastWinner"),
+                ],
+            ),
+            ClassDef(
+                name="Weapon",
+                members=[MemberDef("string", "name")],
+                has_virtual=True,
+            ),
+            ClassDef(
+                name="Sword",
+                base_class="Weapon",
+                members=[MemberDef("int", "attack")],
+            ),
+            ClassDef(
+                name="Bomb",
+                base_class="Weapon",
+                members=[MemberDef("bool", "available")],
+            ),
+            ClassDef(
+                name="Arrow",
+                base_class="Weapon",
+                members=[MemberDef("int", "attack"), MemberDef("int", "uses")],
+            ),
             ClassDef(
                 name="Warrior",
-                members=[MemberDef("int", "hp"), MemberDef("int", "attack")],
+                members=[
+                    MemberDef("int", "id"),
+                    MemberDef("int", "hp"),
+                    MemberDef("int", "attack"),
+                    MemberDef("int", "position"),
+                    MemberDef("string", "camp"),
+                    MemberDef("int", "weaponCount"),
+                ],
                 has_virtual=True,
-            )
-        )
-        self.add_class(ClassDef(name="Dragon", base_class="Warrior", members=[MemberDef("double", "morale")]))
-        self.add_class(ClassDef(name="Ninja", base_class="Warrior", members=[MemberDef("int", "weaponCount")]))
-        self.add_class(ClassDef(name="Iceman", base_class="Warrior", members=[MemberDef("int", "stepCount")]))
+            ),
+            ClassDef(name="Dragon", base_class="Warrior", members=[MemberDef("double", "morale")]),
+            ClassDef(name="Ninja", base_class="Warrior", members=[MemberDef("int", "secondWeaponIndex")]),
+            ClassDef(name="Iceman", base_class="Warrior", members=[MemberDef("int", "stepCount")]),
+            ClassDef(name="Lion", base_class="Warrior", members=[MemberDef("int", "loyalty")]),
+            ClassDef(name="Wolf", base_class="Warrior", members=[MemberDef("int", "capturedWeaponCount")]),
+        ]
+        for cls_def in default_classes:
+            self.add_class(cls_def)

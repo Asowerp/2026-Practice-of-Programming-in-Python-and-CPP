@@ -15,6 +15,7 @@ def export_task2_cpp_project(
     output_dir: str,
     config: WarcraftConfig,
     schedule: EventScheduleProfile,
+    include_module_guide: bool = True,
 ) -> list[str]:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -28,6 +29,8 @@ def export_task2_cpp_project(
         "README.txt": _build_readme(config_copy, schedule_copy),
         "expected_log.txt": expected_log,
     }
+    if include_module_guide:
+        file_map["MODULE_DESIGN.md"] = _build_module_design_doc(config_copy, schedule_copy)
 
     for file_name, content in file_map.items():
         (output_path / file_name).write_text(content, encoding="utf-8")
@@ -77,7 +80,8 @@ def _build_expected_log(config: WarcraftConfig, schedule: EventScheduleProfile) 
     executions = engine.run_until_limit(max_steps=max_steps)
     if executions and not executions[-1].finished:
         raise RuntimeError("Python reference engine did not finish within the export safety step limit.")
-    return build_log_text(engine.export_bundle().events)
+    log_text = build_log_text(engine.export_bundle().events)
+    return "Case 1:\n" + (log_text + "\n" if log_text else "")
 
 
 def _recommended_max_steps(config: WarcraftConfig, schedule: EventScheduleProfile) -> int:
@@ -88,6 +92,8 @@ def _recommended_max_steps(config: WarcraftConfig, schedule: EventScheduleProfil
 def _build_generated_case(config: WarcraftConfig, schedule: EventScheduleProfile) -> str:
     health_lines = [f'{{{_cpp_string(kind)}, {int(config.warrior_health[kind])}}}' for kind in WARRIOR_ORDER]
     attack_lines = [f'{{{_cpp_string(kind)}, {int(config.warrior_attack[kind])}}}' for kind in WARRIOR_ORDER]
+    health_body = indent(",\n".join(health_lines), " " * 12)
+    attack_body = indent(",\n".join(attack_lines), " " * 12)
     slot_lines = [
         "{"
         f"{_cpp_string(slot.key)}, "
@@ -107,19 +113,20 @@ def _build_generated_case(config: WarcraftConfig, schedule: EventScheduleProfile
         config.lion_loyalty_decay = {int(config.lion_loyalty_decay)};
         config.time_limit = {int(config.time_limit)};
         config.warrior_health = {{
-        {indent(',\n'.join(health_lines), ' ' * 12)}
+        {health_body}
         }};
         config.warrior_attack = {{
-        {indent(',\n'.join(attack_lines), ' ' * 12)}
+        {attack_body}
         }};
         """
     ).strip()
+    slot_body = indent(",\n".join(slot_lines), " " * 12)
     schedule_body = dedent(
         f"""
         profile.name = {_cpp_string(schedule.name)};
         profile.strict_mode = {_cpp_bool(schedule.strict_mode)};
         profile.slots = {{
-        {indent(',\n'.join(slot_lines), ' ' * 12)}
+        {slot_body}
         }};
         """
     ).strip()
@@ -159,6 +166,7 @@ def _build_main() -> str:
             engine.runUntilLimit(recommendedMaxSteps());
 
             const std::string log_text = buildLogText(engine.exportEvents());
+            std::cout << "Case 1:" << std::endl;
             if (!log_text.empty()) {
                 std::cout << log_text << std::endl;
             }
@@ -255,6 +263,7 @@ def _build_engine_declarations() -> str:
             std::string stage_key;
             int location_order = 0;
             std::string description;
+            bool omit_time = false;
 
             std::string displayTime() const;
             std::string toLogLine() const;
@@ -322,7 +331,7 @@ def _build_engine_declarations() -> str:
             std::string updateCityFlag(CityState& city, const std::string& winner_camp);
             std::string formatMarch(const WarriorUnit& unit) const;
             std::string formatHeadquarterReached(const WarriorUnit& unit) const;
-            void addEvent(int total_minutes, const std::string& stage_key, int location_order, const std::string& description);
+            void addEvent(int total_minutes, const std::string& stage_key, int location_order, const std::string& description, bool omit_time = false);
             std::vector<WarriorUnit*> aliveWarriors(const std::optional<std::string>& camp = std::nullopt);
             std::vector<const WarriorUnit*> aliveWarriorsConst(const std::optional<std::string>& camp = std::nullopt) const;
             std::vector<WarriorUnit*> aliveWarriorsAt(int position, const std::string& camp);
@@ -497,6 +506,9 @@ def _build_engine_definitions() -> str:
         }
 
         std::string EventRecord::toLogLine() const {
+            if (omit_time) {
+                return description;
+            }
             return displayTime() + " " + description;
         }
 
@@ -742,10 +754,10 @@ def _build_engine_definitions() -> str:
                 const int location_order = camp == "red" ? 0 : config_.city_count + 1;
                 addEvent(total_minutes, "spawn", location_order, camp + " " + warrior->kind + " " + std::to_string(warrior->warrior_id) + " born");
                 if (warrior->kind == "dragon" && warrior->morale.has_value()) {
-                    addEvent(total_minutes, "spawn", location_order, "Its morale is " + formatMorale(*warrior->morale));
+                    addEvent(total_minutes, "spawn", location_order, "Its morale is " + formatMorale(*warrior->morale), true);
                 }
                 if (warrior->kind == "lion" && warrior->loyalty.has_value()) {
-                    addEvent(total_minutes, "spawn", location_order, "Its loyalty is " + std::to_string(*warrior->loyalty));
+                    addEvent(total_minutes, "spawn", location_order, "Its loyalty is " + std::to_string(*warrior->loyalty), true);
                 }
             }
         }
@@ -1007,11 +1019,14 @@ def _build_engine_definitions() -> str:
                 for (const auto& description : result.event_descriptions) {
                     addEvent(total_minutes, "battle", result.location_order, description);
                 }
+                if (!result.yell.empty()) {
+                    addEvent(total_minutes, "battle", result.location_order + 1, result.yell);
+                }
                 if (result.city_elements_earned > 0 && result.winner != nullptr) {
                     addEvent(
                         total_minutes,
                         "battle",
-                        result.location_order + 1,
+                        result.location_order + 2,
                         result.winner->camp + " " + result.winner->kind + " " + std::to_string(result.winner->warrior_id)
                             + " earned " + std::to_string(result.city_elements_earned) + " elements for his headquarter"
                     );
@@ -1020,12 +1035,9 @@ def _build_engine_definitions() -> str:
                     addEvent(
                         total_minutes,
                         "battle",
-                        result.location_order + 2,
+                        result.location_order + 3,
                         result.flag_raised + " flag raised in city " + std::to_string(result.city_id)
                     );
-                }
-                if (!result.yell.empty()) {
-                    addEvent(total_minutes, "battle", result.location_order + 3, result.yell);
                 }
             }
         }
@@ -1057,7 +1069,7 @@ def _build_engine_definitions() -> str:
                 addEvent(
                     total_minutes,
                     "weapon_report",
-                    unit->position * 10,
+                    unit->position,
                     unit->camp + " " + unit->kind + " " + std::to_string(unit->warrior_id) + " has " + unit->weapons.reportText()
                 );
             }
@@ -1065,7 +1077,7 @@ def _build_engine_definitions() -> str:
                 addEvent(
                     total_minutes,
                     "weapon_report",
-                    unit->position * 10 + 5,
+                    config_.city_count + 2 + unit->position,
                     unit->camp + " " + unit->kind + " " + std::to_string(unit->warrior_id) + " has " + unit->weapons.reportText()
                 );
             }
@@ -1279,8 +1291,6 @@ def _build_engine_definitions() -> str:
                 *loser->loyalty -= config_.lion_loyalty_decay;
             }
 
-            result.flag_raised = updateCityFlag(city, winner->camp);
-
             WarriorUnit* red = winner->camp == "red" ? winner : loser;
             WarriorUnit* blue = winner->camp == "blue" ? winner : loser;
             auto [attacker, ignored_defender] = resolveAttacker(city_id, red, blue);
@@ -1288,6 +1298,7 @@ def _build_engine_definitions() -> str:
             if (attacker == winner && winner->kind == "dragon" && winner->morale.has_value() && *winner->morale > 0.8) {
                 result.yell = winner->camp + " dragon " + std::to_string(winner->warrior_id) + " yelled in city " + std::to_string(city_id);
             }
+            result.flag_raised = updateCityFlag(city, winner->camp);
 
             return result;
         }
@@ -1372,8 +1383,8 @@ def _build_engine_definitions() -> str:
                 + " elements and force " + std::to_string(unit.attack);
         }
 
-        void WarcraftEngine::addEvent(int total_minutes, const std::string& stage_key, int location_order, const std::string& description) {
-            events_.push_back(EventRecord{total_minutes, stage_key, location_order, description});
+        void WarcraftEngine::addEvent(int total_minutes, const std::string& stage_key, int location_order, const std::string& description, bool omit_time) {
+            events_.push_back(EventRecord{total_minutes, stage_key, location_order, description, omit_time});
         }
 
         std::vector<WarriorUnit*> WarcraftEngine::aliveWarriors(const std::optional<std::string>& camp) {
@@ -1484,8 +1495,100 @@ def _build_readme(config: WarcraftConfig, schedule: EventScheduleProfile) -> str
 
         Compare output:
         - expected_log.txt is generated from the Python Task2 reference engine using the same case.
+
+        Module design:
+        - MODULE_DESIGN.md explains how the standalone solution maps back to the
+          intended Game / Headquarter / City / Warrior / Weapon / EventScheduler
+          modules used by the teaching UI.
+        - The standalone file keeps those boundaries as classes and structs, but
+          packages them into one translation unit so it can be submitted directly.
         """
     ).strip() + "\n"
+
+
+def _build_module_design_doc(config: WarcraftConfig, schedule: EventScheduleProfile) -> str:
+    enabled_slots = schedule.get_enabled_slots()
+    stage_rows = [
+        f"| `{slot.key}` | {slot.minute:02d} | {slot.title} | `{_stage_owner(slot.key)}` |"
+        for slot in enabled_slots
+    ]
+    stage_table = "\n".join(stage_rows) if stage_rows else "| none | - | no enabled stage | - |"
+    template = dedent(
+        """
+        # Task2 Module Design
+
+        This export contains a judge-ready `task2_solution.cpp`, plus this design
+        note that explains how the generated single file maps to the modular model
+        used by the teaching tool.
+
+        ## Export Scope
+
+        - `task2_solution.cpp` is the complete OJ submission for the current Task2 case.
+        - `expected_log.txt` is generated by the Python reference engine with the same inputs.
+        - `README.txt` contains build and compare commands.
+        - This file is a module map. It is not required by the OJ.
+
+        ## Current Case
+
+        - Profile: `{schedule.name}`
+        - Mode: `{'standard' if schedule.strict_mode else 'custom'}`
+        - M={config.initial_elements}, N={config.city_count}, R={config.arrow_attack}, K={config.lion_loyalty_decay}, T={config.time_limit}
+
+        ## Logical Modules
+
+        | Module | Responsibility | Generated C++ surface |
+        | --- | --- | --- |
+        | Model / Schedule | Stores config, enabled stages, minute values, ordering, and normalized event records. | `WarcraftConfig`, `EventScheduleProfile`, `EventSlotConfig`, `EventRecord` |
+        | WorldState | Tracks headquarters, cities, warriors, and weapon state as explicit value objects. | `HeadquarterState`, `CityState`, `WarriorUnit`, `WeaponSet` |
+        | WarriorFactory | Owns production order, affordability checks, warrior ids, morale/loyalty initialization, and initial weapons. | `spawnNextWarrior`, `buildInitialWeapons`, `giveWeaponByIndex` |
+        | StageRunner | Owns the time axis, stop condition, event dispatch, and stage-level orchestration. | `class WarcraftEngine` |
+        | MovementSystem | Handles march ordering, headquarter arrivals, iceman step effects, and movement messages. | `runMarchStage`, `formatMarch`, `formatHeadquarterReached` |
+        | WeaponSystem | Handles arrow, bomb, sword degradation, weapon capture, and weapon reports. | `runArrowStage`, `runBombStage`, `WeaponSet` |
+        | BattleResolver | Handles attacker selection, battle death prediction, combat resolution, rewards, city collection, and flag updates. | `resolveAttacker`, `predictBattleDeaths`, `simulateBattle`, `updateCityFlag` |
+        | EventLog / Reporter | Converts normalized events into exact problem output and timeline-friendly records. | `EventRecord`, `buildLogText` |
+
+        ## Enabled Event Stages
+
+        | Stage key | Minute | UI title | Logical owner |
+        | --- | ---: | --- | --- |
+        __STAGE_TABLE__
+
+        ## Why The OJ Export Is A Single File
+
+        The UI encourages modular design first, but online judges usually expect a
+        single translation unit. The exporter therefore preserves module boundaries
+        in named classes and structs, then emits them into `task2_solution.cpp`.
+        If students want a multi-file learning skeleton, use the class editor's
+        "导出工程骨架" command; if they want something to submit, use this Task2
+        standalone export.
+        """
+    ).strip()
+    return (
+        template.replace("`{schedule.name}`", f"`{schedule.name}`")
+        .replace("`{'standard' if schedule.strict_mode else 'custom'}`", f"`{'standard' if schedule.strict_mode else 'custom'}`")
+        .replace(
+            "M={config.initial_elements}, N={config.city_count}, R={config.arrow_attack}, K={config.lion_loyalty_decay}, T={config.time_limit}",
+            f"M={config.initial_elements}, N={config.city_count}, R={config.arrow_attack}, K={config.lion_loyalty_decay}, T={config.time_limit}",
+        )
+        .replace("__STAGE_TABLE__", stage_table)
+        + "\n"
+    )
+
+
+def _stage_owner(stage_key: str) -> str:
+    mapping = {
+        "spawn": "WarriorFactory / Headquarter",
+        "lion_escape": "Warrior",
+        "march": "MovementSystem",
+        "city_produce": "City",
+        "collect": "City / Headquarter",
+        "arrow": "WeaponSystem",
+        "bomb": "WeaponSystem / BattleResolver",
+        "battle": "BattleResolver / City",
+        "headquarter_report": "Headquarter / EventLog",
+        "weapon_report": "WeaponSystem / EventLog",
+    }
+    return mapping.get(stage_key, "Game")
 
 
 def _cpp_string(value: str) -> str:

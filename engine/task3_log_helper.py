@@ -68,7 +68,10 @@ def compare_logs(expected_text: str, actual_text: str) -> LogComparison:
             )
 
     matched = not mismatches
-    summary = "输出完全一致。" if matched else f"共发现 {len(mismatches)} 处行差异，首个差异在第 {first_diff_line} 行。"
+    if matched:
+        summary = "输出完全一致。"
+    else:
+        summary = f"共发现 {len(mismatches)} 处行差异，首个差异在第 {first_diff_line} 行。"
 
     html_diff = HtmlDiff(wrapcolumn=88).make_table(
         expected_lines,

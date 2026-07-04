@@ -104,6 +104,7 @@ class BlockWorkspaceList(QListWidget):
             "QListWidget::item { background: transparent; border: none; padding: 2px; }"
             "QListWidget::item:selected { background: #EEF2FF; border-radius: 12px; }"
         )
+        self._empty_hint = "双击左侧积木或拖到这里开始编排脚本"
 
     def dragEnterEvent(self, event) -> None:  # noqa: N802
         if event.source() is self:
@@ -136,6 +137,26 @@ class BlockWorkspaceList(QListWidget):
             return
 
         super().dropEvent(event)
+
+    def set_empty_hint(self, text: str) -> None:
+        self._empty_hint = text
+        self.viewport().update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        if self.count() > 0:
+            return
+
+        from PySide6.QtGui import QPainter
+
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QColor("#94A3B8"))
+        painter.drawText(
+            self.viewport().rect().adjusted(24, 24, -24, -24),
+            Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
+            self._empty_hint,
+        )
 
 
 class BlockItemWidget(QFrame):
@@ -384,19 +405,24 @@ class BlockProgramEditor(QWidget):
         layout.addWidget(summary)
 
         self.workspace = BlockWorkspaceList()
+        self.workspace.set_empty_hint("双击左侧积木，或拖到这里开始编排脚本。")
         self.workspace.blockDropped.connect(self.add_block_by_key)
         self.workspace.orderChanged.connect(self._handle_workspace_order_changed)
         layout.addWidget(self.workspace)
 
         button_row = QHBoxLayout()
+        self.count_label = QLabel("0 个积木")
+        self.count_label.setStyleSheet("color: #64748B; font-weight: 700;")
         self.delete_btn = QPushButton("删除选中积木")
         self.clear_btn = QPushButton("清空工作区")
         self.delete_btn.clicked.connect(self.delete_selected_block)
         self.clear_btn.clicked.connect(self.clear_blocks)
+        button_row.addWidget(self.count_label)
+        button_row.addStretch(1)
         button_row.addWidget(self.delete_btn)
         button_row.addWidget(self.clear_btn)
-        button_row.addStretch(1)
         layout.addLayout(button_row)
+        self._update_workspace_state()
         return group
 
     def _fill_palette(self) -> None:
@@ -434,6 +460,7 @@ class BlockProgramEditor(QWidget):
             self.workspace.addItem(item)
         self.workspace.setItemWidget(item, widget)
         self._refresh_step_numbers()
+        self._update_workspace_state()
         self.scriptChanged.emit()
 
     def get_script(self) -> list[dict[str, object]]:
@@ -462,6 +489,7 @@ class BlockProgramEditor(QWidget):
                 widget.deleteLater()
             del item
         self._refresh_step_numbers()
+        self._update_workspace_state()
         self.scriptChanged.emit()
 
     def delete_selected_block(self) -> None:
@@ -484,10 +512,12 @@ class BlockProgramEditor(QWidget):
             widget.deleteLater()
         del taken_item
         self._refresh_step_numbers()
+        self._update_workspace_state()
         self.scriptChanged.emit()
 
     def _handle_workspace_order_changed(self) -> None:
         self._refresh_step_numbers()
+        self._update_workspace_state()
         self.scriptChanged.emit()
 
     def _refresh_step_numbers(self) -> None:
@@ -497,6 +527,18 @@ class BlockProgramEditor(QWidget):
             if isinstance(widget, BlockItemWidget):
                 widget.set_step_no(row + 1)
                 item.setSizeHint(widget.sizeHint())
+        self._update_workspace_state()
+
+    def _update_workspace_state(self) -> None:
+        count = self.workspace.count()
+        if hasattr(self, "count_label"):
+            self.count_label.setText(f"{count} 个积木")
+        if hasattr(self, "delete_btn"):
+            self.delete_btn.setEnabled(count > 0)
+        if hasattr(self, "clear_btn"):
+            self.clear_btn.setEnabled(count > 0)
+        if hasattr(self, "workspace"):
+            self.workspace.viewport().update()
 
     def _resolve_step_no(self, index: int) -> int:
         if 0 <= index < self.workspace.count():

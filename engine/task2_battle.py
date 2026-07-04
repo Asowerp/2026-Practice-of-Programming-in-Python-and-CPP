@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from controllers.class_manager import ClassManager
-from controllers.models import ObjectInstance
+from engine.class_manager import ClassManager
+from engine.models import ObjectInstance
 
 
 COMBAT_STAT_FIELDS = ("hp", "attack", "defense", "weapon_durability")

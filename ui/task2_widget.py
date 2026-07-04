@@ -10,12 +10,15 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QComboBox,
     QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
 from ui.block_workspace import BlockProgramEditor, BlockSpec, FieldSpec
+from ui.timeline_controller import TimelineController
+from ui.timeline_panel import TimelinePanel
 from engine.class_manager import ClassManager
 from engine.task2_cpp_exporter import export_task2_cpp_project
 from engine.warcraft_engine import (
@@ -40,6 +43,7 @@ class Task2Widget(QWidget):
         self.engine: WarcraftEngine | None = None
         self.last_bundle = None
         self.last_context: dict[str, object] | None = None
+        self.timeline_controller: TimelineController | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -65,18 +69,29 @@ class Task2Widget(QWidget):
         self.example_btn = QPushButton("加载推荐积木")
         self.run_btn = QPushButton("执行模拟脚本")
         self.run_btn.setObjectName("btnPrimary")
-        self.export_cpp_btn = QPushButton("导出 C++ 单文件")
+        self.export_mode_combo = QComboBox()
+        self.export_mode_combo.addItem("OJ 单文件题解", "standalone")
+        self.export_mode_combo.addItem("模块化学习工程骨架", "skeleton")
+        self.export_mode_combo.setToolTip("OJ 单文件用于提交；模块化工程骨架用于理解 Game/City/Warrior/Weapon 等设计边界。")
+        self.export_cpp_btn = QPushButton("导出 C++")
         self.clear_btn = QPushButton("清空结果")
+        self.example_btn.setToolTip("自动填入一组可直接运行的标准题面模拟流程。")
+        self.run_btn.setToolTip("按左侧积木顺序执行模拟脚本。")
+        self.export_cpp_btn.setToolTip("导出当前选择的 C++ 工程或 OJ 单文件。")
+        self.clear_btn.setToolTip("清空右侧结果区，不删除左侧积木脚本。")
         self.example_btn.clicked.connect(self.load_example_script)
         self.run_btn.clicked.connect(self.run_script)
         self.export_cpp_btn.clicked.connect(self.export_cpp_project)
         self.clear_btn.clicked.connect(self.clear_outputs)
+        self.export_mode_combo.currentIndexChanged.connect(self._refresh_export_mode_hint)
         action_row.addWidget(self.example_btn)
         action_row.addWidget(self.run_btn)
+        action_row.addWidget(self.export_mode_combo)
         action_row.addWidget(self.export_cpp_btn)
         action_row.addWidget(self.clear_btn)
         action_row.addStretch(1)
         main_layout.addLayout(action_row)
+        self._refresh_export_mode_hint()
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         self.block_editor = BlockProgramEditor(self._build_block_specs())
@@ -92,6 +107,24 @@ class Task2Widget(QWidget):
         self.summary_label = QLabel("先配置 Case 和阶段表，再初始化并推进模拟。")
         self.summary_label.setStyleSheet("font-weight: 700; color: #4F46E5;")
         layout.addWidget(self.summary_label)
+
+        timeline_group = QGroupBox("时间轴联动")
+        timeline_layout = QVBoxLayout(timeline_group)
+        self.timeline_focus_label = QLabel("执行脚本并导出事件后，可直接在这里播放和定位事件。")
+        self.timeline_focus_label.setWordWrap(True)
+        self.timeline_focus_label.setStyleSheet(
+            "background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; "
+            "padding: 10px; color: #334155; font-weight: 700;"
+        )
+        timeline_layout.addWidget(self.timeline_focus_label)
+        self.timeline_panel = TimelinePanel(
+            "Task2 事件时间轴",
+            "执行模拟脚本并导出事件后，这里会显示完整事件时间轴。",
+        )
+        self.timeline_controller = TimelineController(self.timeline_panel)
+        self.timeline_controller.eventSelected.connect(self.focus_timeline_event)
+        timeline_layout.addWidget(self.timeline_panel, 1)
+        layout.addWidget(timeline_group)
 
         state_group = QGroupBox("当前世界状态")
         state_layout = QVBoxLayout(state_group)
@@ -111,8 +144,10 @@ class Task2Widget(QWidget):
         event_layout = QVBoxLayout(event_group)
         self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
+        self.log_output.setPlaceholderText("执行模拟脚本后，这里会显示每个积木的执行结果。")
         event_layout.addWidget(self.log_output)
         layout.addWidget(event_group, 1)
+        self._set_initial_result_placeholders()
         return container
 
     def _build_block_specs(self) -> list[BlockSpec]:
@@ -267,12 +302,18 @@ class Task2Widget(QWidget):
             {"key": "run_until_limit", "fields": {"max_steps": 120}},
             {"key": "export_events", "fields": {}},
         ])
+        self.summary_label.setText("已加载推荐积木。下一步点击“执行模拟脚本”。")
+        self.summary_label.setStyleSheet("font-weight: 700; color: #4F46E5;")
 
     def clear_outputs(self) -> None:
         self.log_output.clear()
         self.world_output.clear()
         self.schedule_output.clear()
-        self.summary_label.setText("输出已清空。")
+        self.timeline_focus_label.setText("执行脚本并导出事件后，可直接在这里播放和定位事件。")
+        if self.timeline_controller is not None:
+            self.timeline_controller.set_events([])
+        self._set_initial_result_placeholders()
+        self.summary_label.setText("输出已清空。左侧脚本仍保留，可继续执行。")
         self.summary_label.setStyleSheet("font-weight: 700; color: #4F46E5;")
 
     def run_script(self) -> None:
@@ -301,37 +342,68 @@ class Task2Widget(QWidget):
         self._render_context(context)
         self.summary_label.setText(context.get("last_note", "模拟脚本执行结束。"))
         self.summary_label.setStyleSheet("font-weight: 700; color: #4F46E5;")
+        self._refresh_export_mode_hint()
 
     def export_cpp_project(self) -> None:
-        if self.last_context is None:
-            QMessageBox.warning(self, "导出失败", "请先执行一次模拟脚本，再导出当前 Task2 的 C++ 工程。")
-            return
+        export_mode = self.export_mode_combo.currentData()
+        if export_mode == "standalone":
+            if self.last_context is None:
+                QMessageBox.warning(self, "导出失败", "请先执行一次模拟脚本，再导出当前 Task2 的 OJ 单文件题解。")
+                return
 
-        config = self.last_context.get("config")
-        schedule = self.last_context.get("schedule")
-        if not isinstance(config, WarcraftConfig) or not hasattr(schedule, "get_enabled_slots"):
-            QMessageBox.warning(self, "导出失败", "当前没有可用的 Task2 Case 配置，请先重新执行模拟脚本。")
-            return
+            config = self.last_context.get("config")
+            schedule = self.last_context.get("schedule")
+            if not isinstance(config, WarcraftConfig) or not hasattr(schedule, "get_enabled_slots"):
+                QMessageBox.warning(self, "导出失败", "当前没有可用的 Task2 Case 配置，请先重新执行模拟脚本。")
+                return
 
         directory = QFileDialog.getExistingDirectory(self, "选择 C++ 工程导出目录")
         if not directory:
             return
 
         try:
+            if export_mode == "skeleton":
+                self.manager.export_cpp_skeleton(directory)
+                self.summary_label.setText(f"模块化 C++ 学习工程骨架已导出到：{directory}")
+                self.summary_label.setStyleSheet("font-weight: 700; color: #059669;")
+                QMessageBox.information(
+                    self,
+                    "导出成功",
+                    "已导出模块化 C++ 学习工程骨架到：\n"
+                    f"{directory}\n\n"
+                    "该模式会生成可编译运行的教学工程，用于理解 Game / Headquarter / City / Warrior / Weapon 的职责划分。\n"
+                    "如果要提交评测，请切换到“OJ 单文件题解”导出完整 task2_solution.cpp。"
+                )
+                return
+
             exported_files = export_task2_cpp_project(directory, config, schedule)
-            self.summary_label.setText(f"Task2 C++ 单文件已导出到：{directory}")
+            self.summary_label.setText(f"Task2 OJ 单文件题解已导出到：{directory}")
             self.summary_label.setStyleSheet("font-weight: 700; color: #059669;")
             QMessageBox.information(
                 self,
                 "导出成功",
                 "已导出 Task2 独立 C++ 题解到：\n"
                 f"{directory}\n\n"
-                "task2_solution.cpp 是可直接提交 OJ 的单文件。\n\n"
+                "task2_solution.cpp 是可直接提交 OJ 的单文件；MODULE_DESIGN.md 说明它与模块化设计的对应关系。\n\n"
                 "包含文件：\n"
                 + "\n".join(exported_files),
             )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "导出失败", str(exc))
+
+    def _set_initial_result_placeholders(self) -> None:
+        self.world_output.setPlaceholderText("初始化 Case 后，这里会显示司令部、城市、武士和生命元状态。")
+        self.schedule_output.setPlaceholderText("加载阶段模板或执行脚本后，这里会显示 00/05/10/20/30/35/38/40/50/55 等阶段。")
+        self.log_output.setPlaceholderText("执行模拟脚本后，这里会显示每个积木的执行结果。")
+
+    def _refresh_export_mode_hint(self) -> None:
+        export_mode = self.export_mode_combo.currentData()
+        if export_mode == "standalone":
+            self.export_cpp_btn.setToolTip("导出可提交 OJ 的 task2_solution.cpp；需要先执行一次模拟脚本。")
+            self.export_cpp_btn.setText("导出 OJ 题解")
+            return
+        self.export_cpp_btn.setToolTip("导出可编译运行的模块化教学工程；不需要先运行模拟。")
+        self.export_cpp_btn.setText("导出学习骨架")
 
     def _execute_block(self, context: dict[str, object], key: str, fields: dict[str, object]) -> tuple[bool, str]:
         config = context.get("config")
@@ -454,9 +526,11 @@ class Task2Widget(QWidget):
                 return False, "没有可导出的模拟结果。"
             bundle = engine.export_bundle()
             self.last_bundle = bundle
+            if self.timeline_controller is not None:
+                self.timeline_controller.load_simulation_bundle(bundle)
             self.eventsExported.emit(bundle)
-            context["last_note"] = f"已导出 {len(bundle.events)} 条事件到 Task3。"
-            return True, f"已导出 {len(bundle.events)} 条事件，模式为 {bundle.mode_label}。"
+            context["last_note"] = f"已导出 {len(bundle.events)} 条事件到 Task3 和时间轴。"
+            return True, f"已导出 {len(bundle.events)} 条事件，模式为 {bundle.mode_label}；时间轴已同步。"
 
         if key == "reset_simulation":
             self.engine = None
@@ -488,6 +562,25 @@ class Task2Widget(QWidget):
                 )
             else:
                 self.world_output.clear()
+
+    def focus_timeline_event(self, index: int, event: object) -> None:
+        event_time = getattr(event, "display_time", "--:--")
+        stage_key = getattr(event, "stage_key", "unknown")
+        description = getattr(event, "description", str(event))
+        location_order = getattr(event, "location_order", "")
+        total_minutes = getattr(event, "total_minutes", "")
+        location_text = f"\n位置顺序：{location_order}" if location_order != "" else ""
+        minute_text = f"\n总分钟：{total_minutes}" if total_minutes != "" else ""
+        self.timeline_focus_label.setText(
+            f"当前时间轴事件 #{index + 1}\n"
+            f"时间：{event_time}\n"
+            f"阶段：{stage_key}"
+            f"{minute_text}"
+            f"{location_text}\n"
+            f"说明：{description}"
+        )
+        self.summary_label.setText(f"时间轴已定位到 {event_time} / {stage_key}。")
+        self.summary_label.setStyleSheet("font-weight: 700; color: #4F46E5;")
 
     @staticmethod
     def _format_stage_execution(execution) -> str:
