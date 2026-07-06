@@ -11,8 +11,6 @@ pip install -r requirements.txt
 python main.py
 ```
 
-如果只需要验证核心逻辑，可以直接运行 Python 模块测试或导入 `engine` 中的纯逻辑模块；GUI 依赖集中在 `ui/` 目录。
-
 如果启动 GUI 时提示缺少 `PySide6`，请先确认 `python -c "import sys; print(sys.executable); print(sys.implementation.name)"` 指向的是安装了 PySide6 的 CPython。Windows 下如果 `python` 指向 PyPy，建议切换到 CPython 后重新执行 `python -m pip install -r requirements.txt`。
 
 也可以先运行环境自检：
