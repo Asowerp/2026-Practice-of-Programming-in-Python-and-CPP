@@ -106,9 +106,6 @@ WOWhelper/
 ├── README.md                    # 用户文档
 ├── requirements.txt             # GUI 依赖
 ├── check_environment.py         # Python / PySide6 / g++ 环境自检
-├── run_regressions.py           # 一键回归验证入口
-├── run_warriors4.py             # Warriors4 OJ 输入输出验证入口
-├── t.txt                        # Warriors4 题面文本
 ├── warriors4_data/              # Warriors4 样例输入输出
 ├── engine/                      # 业务逻辑层
 │   ├── ai_log_assistant.py      # AI 日志调错接口封装
@@ -149,45 +146,3 @@ WOWhelper/
 - 验证程序输出结果。
 - 借助 AI 快速定位日志差异原因。
 - 保持模拟器、日志处理、AI 接口和界面层的模块化边界。
-
-## 开发验证
-
-推荐在提交前运行：
-
-```bash
-python run_regressions.py
-```
-
-该命令会一次性检查：
-
-- Python 语法编译。
-- GUI 模块导入状态；如果当前解释器没有安装 PySide6，会清晰标记为跳过。
-- 默认模块化类设计是否覆盖题面对象集合。
-- 模块化 C++ 学习工程骨架是否能用 `g++ -std=c++20` 编译并运行出教学事件流。
-- Task3 日志筛选、逐行对拍和 AI 调错配置的本地确定性行为。
-- Warriors4 两组样例回归。
-- Task2 C++ 导出包是否包含 `MODULE_DESIGN.md`，并在有 `g++` 时编译运行 `task2_solution.cpp` 与 `expected_log.txt` 对拍。
-
-如果想把 GUI 依赖也作为硬性验收条件，可以运行：
-
-```bash
-python run_regressions.py --strict-gui
-```
-
-该模式会在当前 Python 缺少 PySide6 时直接失败，适合安装好 CPython + PySide6 后做完整 GUI 导入验收。
-
-也可以分项运行：
-
-```bash
-python -m compileall .
-python -c "from engine.warcraft_engine import WarcraftEngine, build_default_config, build_schedule_profile; cfg=build_default_config(); e=WarcraftEngine(cfg, build_schedule_profile()); print(e.initialize_case()); e.run_until_limit(); print(len(e.export_bundle().events))"
-```
-
-如果要直接验证 Warriors4 的 OJ 样例：
-
-```bash
-python run_warriors4.py warriors4_data/extra.in --compare warriors4_data/extra.out
-python run_warriors4.py warriors4_data/Warcraft.in --compare warriors4_data/Warcraft.out
-```
-
-这两个命令会使用 `engine/warriors4_runner.py` 解析题面输入格式，调用 Task2 参考模拟器生成 `Case n:` 格式输出，并逐行对比标准答案。
