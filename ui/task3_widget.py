@@ -105,10 +105,12 @@ class Task3Widget(QWidget):
         main_layout.addLayout(action_row)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(1)
         self.block_editor = BlockProgramEditor(self._build_block_specs())
         splitter.addWidget(self.block_editor)
         splitter.addWidget(self._build_result_panel())
-        splitter.setSizes([860, 560])
+        splitter.setSizes([600, 780])
+        splitter.setToolTip("拖动中间的分隔线可以调整左右面板宽度")
         main_layout.addWidget(splitter)
         self._refresh_ai_button_state()
 
@@ -124,6 +126,13 @@ class Task3Widget(QWidget):
         self.summary_label.setStyleSheet("font-weight: 700; color: #4F46E5;")
         layout.addWidget(self.summary_label)
 
+        right_splitter = QSplitter(Qt.Orientation.Horizontal)
+        right_splitter.setHandleWidth(1)
+
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+
         timeline_group = QGroupBox("导入事件时间轴")
         timeline_layout = QVBoxLayout(timeline_group)
         self.timeline_panel = TimelinePanel(
@@ -133,7 +142,7 @@ class Task3Widget(QWidget):
         self.timeline_controller = TimelineController(self.timeline_panel)
         self.timeline_controller.eventSelected.connect(self.focus_timeline_event)
         timeline_layout.addWidget(self.timeline_panel)
-        layout.addWidget(timeline_group, 1)
+        left_layout.addWidget(timeline_group, 1)
 
         ai_group = QGroupBox("AI 调错助手")
         ai_layout = QFormLayout(ai_group)
@@ -150,7 +159,7 @@ class Task3Widget(QWidget):
         ai_layout.addRow("API Key", self.ai_key_edit)
         ai_layout.addRow("模型名", self.ai_model_override_edit)
         ai_layout.addRow("接口地址", self.ai_base_url_edit)
-        layout.addWidget(ai_group)
+        left_layout.addWidget(ai_group)
 
         process_group = QGroupBox("脚本执行日志")
         process_layout = QVBoxLayout(process_group)
@@ -158,7 +167,11 @@ class Task3Widget(QWidget):
         self.process_output.setReadOnly(True)
         self.process_output.setPlaceholderText("执行日志脚本后，这里会显示每个积木的处理结果。")
         process_layout.addWidget(self.process_output)
-        layout.addWidget(process_group)
+        left_layout.addWidget(process_group)
+
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
 
         text_row = QHBoxLayout()
 
@@ -177,7 +190,7 @@ class Task3Widget(QWidget):
 
         text_row.addWidget(expected_group)
         text_row.addWidget(actual_group)
-        layout.addLayout(text_row, 1)
+        right_layout.addLayout(text_row, 1)
 
         diff_group = QGroupBox("差异高亮")
         diff_layout = QVBoxLayout(diff_group)
@@ -185,7 +198,7 @@ class Task3Widget(QWidget):
         self.diff_view.setReadOnly(True)
         self.diff_view.setPlaceholderText("执行“对比我的输出”后，这里会显示逐行差异。")
         diff_layout.addWidget(self.diff_view)
-        layout.addWidget(diff_group, 1)
+        right_layout.addWidget(diff_group, 1)
 
         ai_result_group = QGroupBox("AI 调错建议")
         ai_result_layout = QVBoxLayout(ai_result_group)
@@ -193,7 +206,14 @@ class Task3Widget(QWidget):
         self.ai_output.setReadOnly(True)
         self.ai_output.setPlaceholderText("先执行日志脚本并产生差异，再点击“AI 分析差异”。")
         ai_result_layout.addWidget(self.ai_output)
-        layout.addWidget(ai_result_group, 1)
+        right_layout.addWidget(ai_result_group, 1)
+
+        right_splitter.addWidget(left_widget)
+        right_splitter.addWidget(right_widget)
+        right_splitter.setSizes([320, 460])
+        right_splitter.setToolTip("拖动分隔线可调整右侧两栏宽度")
+        layout.addWidget(right_splitter, 1)
+
         return container
 
     def _build_block_specs(self) -> list[BlockSpec]:

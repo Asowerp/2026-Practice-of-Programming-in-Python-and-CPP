@@ -94,10 +94,12 @@ class Task2Widget(QWidget):
         self._refresh_export_mode_hint()
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(1)
         self.block_editor = BlockProgramEditor(self._build_block_specs())
         splitter.addWidget(self.block_editor)
         splitter.addWidget(self._build_result_panel())
-        splitter.setSizes([860, 520])
+        splitter.setSizes([650, 730])
+        splitter.setToolTip("拖动中间的分隔线可以调整左右面板宽度")
         main_layout.addWidget(splitter)
 
     def _build_result_panel(self) -> QWidget:
@@ -107,6 +109,13 @@ class Task2Widget(QWidget):
         self.summary_label = QLabel("先配置 Case 和阶段表，再初始化并推进模拟。")
         self.summary_label.setStyleSheet("font-weight: 700; color: #4F46E5;")
         layout.addWidget(self.summary_label)
+
+        right_splitter = QSplitter(Qt.Orientation.Horizontal)
+        right_splitter.setHandleWidth(1)
+
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
 
         timeline_group = QGroupBox("时间轴联动")
         timeline_layout = QVBoxLayout(timeline_group)
@@ -124,21 +133,25 @@ class Task2Widget(QWidget):
         self.timeline_controller = TimelineController(self.timeline_panel)
         self.timeline_controller.eventSelected.connect(self.focus_timeline_event)
         timeline_layout.addWidget(self.timeline_panel, 1)
-        layout.addWidget(timeline_group)
+        left_layout.addWidget(timeline_group)
 
         state_group = QGroupBox("当前世界状态")
         state_layout = QVBoxLayout(state_group)
         self.world_output = QPlainTextEdit()
         self.world_output.setReadOnly(True)
         state_layout.addWidget(self.world_output)
-        layout.addWidget(state_group)
+        left_layout.addWidget(state_group)
 
         schedule_group = QGroupBox("当前事件日程")
         schedule_layout = QVBoxLayout(schedule_group)
         self.schedule_output = QPlainTextEdit()
         self.schedule_output.setReadOnly(True)
         schedule_layout.addWidget(self.schedule_output)
-        layout.addWidget(schedule_group)
+        left_layout.addWidget(schedule_group)
+
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
 
         event_group = QGroupBox("解释执行日志")
         event_layout = QVBoxLayout(event_group)
@@ -146,7 +159,14 @@ class Task2Widget(QWidget):
         self.log_output.setReadOnly(True)
         self.log_output.setPlaceholderText("执行模拟脚本后，这里会显示每个积木的执行结果。")
         event_layout.addWidget(self.log_output)
-        layout.addWidget(event_group, 1)
+        right_layout.addWidget(event_group)
+
+        right_splitter.addWidget(left_widget)
+        right_splitter.addWidget(right_widget)
+        right_splitter.setSizes([340, 390])
+        right_splitter.setToolTip("拖动分隔线可调整右侧两栏宽度")
+        layout.addWidget(right_splitter, 1)
+
         self._set_initial_result_placeholders()
         return container
 

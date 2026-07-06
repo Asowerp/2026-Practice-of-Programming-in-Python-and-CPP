@@ -71,15 +71,24 @@ class Task1Widget(QWidget):
         main_layout.addLayout(action_row)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(1)
         self.block_editor = BlockProgramEditor(self._build_block_specs())
         splitter.addWidget(self.block_editor)
         splitter.addWidget(self._build_reference_panel())
-        splitter.setSizes([820, 500])
+        splitter.setSizes([620, 700])
+        splitter.setToolTip("拖动中间的分隔线可以调整左右面板宽度")
         main_layout.addWidget(splitter)
 
     def _build_reference_panel(self) -> QWidget:
         container = QWidget()
         layout = QVBoxLayout(container)
+
+        right_splitter = QSplitter(Qt.Orientation.Horizontal)
+        right_splitter.setHandleWidth(1)
+
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
 
         ctor_group = QGroupBox("初始化列表示例输入")
         ctor_layout = QFormLayout(ctor_group)
@@ -98,24 +107,32 @@ class Task1Widget(QWidget):
         ctor_layout.addRow("Dragon", self.dragon_ctor_edit)
         ctor_layout.addRow("Ninja", self.ninja_ctor_edit)
         ctor_layout.addRow("Iceman", self.iceman_ctor_edit)
+        left_layout.addWidget(ctor_group)
 
         info = QLabel(
             "说明：当前 Task1 的“检查初始化列表调用”积木会读取这里的文本。"
         )
         info.setWordWrap(True)
         info.setStyleSheet("color: #64748B; font-size: 12px;")
+        left_layout.addWidget(info)
 
         reference_group = QGroupBox("标准层级参考")
         reference_layout = QVBoxLayout(reference_group)
         self.reference_output = QPlainTextEdit()
         self.reference_output.setReadOnly(True)
         reference_layout.addWidget(self.reference_output)
+        left_layout.addWidget(reference_group)
 
         entity_group = QGroupBox("题面对象参考")
         entity_layout = QVBoxLayout(entity_group)
         self.entity_output = QPlainTextEdit()
         self.entity_output.setReadOnly(True)
         entity_layout.addWidget(self.entity_output)
+        left_layout.addWidget(entity_group)
+
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
 
         code_group = QGroupBox("当前类结构概览")
         code_layout = QVBoxLayout(code_group)
@@ -126,6 +143,7 @@ class Task1Widget(QWidget):
             " border-radius: 8px; font-family: 'Cascadia Code', 'Consolas', monospace; padding: 10px; }"
         )
         code_layout.addWidget(self.code_output)
+        right_layout.addWidget(code_group, 1)
 
         result_group = QGroupBox("脚本执行结果")
         result_layout = QVBoxLayout(result_group)
@@ -133,13 +151,14 @@ class Task1Widget(QWidget):
         self.result_output.setReadOnly(True)
         self.result_output.setPlaceholderText("拖好积木后点击“执行校验脚本”。")
         result_layout.addWidget(self.result_output)
+        right_layout.addWidget(result_group, 1)
 
-        layout.addWidget(ctor_group)
-        layout.addWidget(info)
-        layout.addWidget(reference_group)
-        layout.addWidget(entity_group)
-        layout.addWidget(code_group, 1)
-        layout.addWidget(result_group, 1)
+        right_splitter.addWidget(left_widget)
+        right_splitter.addWidget(right_widget)
+        right_splitter.setSizes([340, 360])
+        right_splitter.setToolTip("拖动分隔线可调整右侧两栏宽度")
+        layout.addWidget(right_splitter, 1)
+
         return container
 
     def _build_block_specs(self) -> list[BlockSpec]:

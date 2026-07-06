@@ -25,7 +25,7 @@ vg\x22><path d=\x22M24\
 24C4 35.0457 12.\
 9543 44 24 44Z\x22 \
 fill=\x22none\x22 stro\
-ke=\x22#FFF\x22 stroke\
+ke=\x22#333\x22 stroke\
 -width=\x224\x22 strok\
 e-linejoin=\x22roun\
 d\x22/><path d=\x22M20\
@@ -33,7 +33,7 @@ d\x22/><path d=\x22M20\
 0.5359L32 24L26 \
 27.4641L20 30.92\
 82V24Z\x22 fill=\x22no\
-ne\x22 stroke=\x22#FFF\
+ne\x22 stroke=\x22#333\
 \x22 stroke-width=\x22\
 4\x22 stroke-linejo\
 in=\x22round\x22/></sv\
@@ -52,7 +52,7 @@ vg\x22><path d=\x22M21\
  24V18L26 21L31 \
 24L26 27L21 30V2\
 4Z\x22 fill=\x22none\x22 \
-stroke=\x22#FFF\x22 st\
+stroke=\x22#333\x22 st\
 roke-width=\x224\x22 s\
 troke-linejoin=\x22\
 round\x22/><path d=\
@@ -67,13 +67,13 @@ round\x22/><path d=\
 72 11.2721 11.27\
 21C9.6141 12.930\
 1 6 17 6 17\x22 str\
-oke=\x22#FFF\x22 strok\
+oke=\x22#333\x22 strok\
 e-width=\x224\x22 stro\
 ke-linecap=\x22roun\
 d\x22 stroke-linejo\
 in=\x22round\x22/><pat\
 h d=\x22M6 9V17H14\x22\
- stroke=\x22#FFF\x22 s\
+ stroke=\x22#333\x22 s\
 troke-width=\x224\x22 \
 stroke-linecap=\x22\
 round\x22 stroke-li\
@@ -98,18 +98,18 @@ vg\x22><path d=\x22M24\
 24C4 35.0457 12.\
 9543 44 24 44Z\x22 \
 fill=\x22none\x22 stro\
-ke=\x22#FFF\x22 stroke\
+ke=\x22#333\x22 stroke\
 -width=\x224\x22 strok\
 e-linejoin=\x22roun\
 d\x22/><path d=\x22M19\
  18V30\x22 stroke=\x22\
-#FFF\x22 stroke-wid\
+#333\x22 stroke-wid\
 th=\x224\x22 stroke-li\
 necap=\x22round\x22 st\
 roke-linejoin=\x22r\
 ound\x22/><path d=\x22\
 M29 18V30\x22 strok\
-e=\x22#FFF\x22 stroke-\
+e=\x22#333\x22 stroke-\
 width=\x224\x22 stroke\
 -linecap=\x22round\x22\
  stroke-linejoin\
@@ -127,13 +127,13 @@ width=\x224\x22 stroke\
 ww.w3.org/2000/s\
 vg\x22><path d=\x22M34\
  36L22 24L34 12\x22\
- stroke=\x22#FFF\x22 s\
+ stroke=\x22#333\x22 s\
 troke-width=\x224\x22 \
 stroke-linecap=\x22\
 round\x22 stroke-li\
 nejoin=\x22round\x22/>\
 <path d=\x22M14 12V\
-36\x22 stroke=\x22#FFF\
+36\x22 stroke=\x22#333\
 \x22 stroke-width=\x22\
 4\x22 stroke-lineca\
 p=\x22round\x22 stroke\
@@ -151,13 +151,13 @@ p=\x22round\x22 stroke\
 ww.w3.org/2000/s\
 vg\x22><path d=\x22M14\
  12L26 24L14 36\x22\
- stroke=\x22#FFF\x22 s\
+ stroke=\x22#333\x22 s\
 troke-width=\x224\x22 \
 stroke-linecap=\x22\
 round\x22 stroke-li\
 nejoin=\x22round\x22/>\
 <path d=\x22M34 12V\
-36\x22 stroke=\x22#FFF\
+36\x22 stroke=\x22#333\
 \x22 stroke-width=\x22\
 4\x22 stroke-lineca\
 p=\x22round\x22 stroke\
