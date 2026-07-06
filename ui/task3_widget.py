@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QComboBox,
@@ -17,13 +17,39 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from engine.ai_log_assistant import build_model_config, explain_log_mismatch, get_model_names
+from engine.ai_log_assistant import AIDebugResult, build_model_config, explain_log_mismatch, get_model_names
 from engine.class_manager import ClassManager
 from engine.task3_log_helper import LogComparison, build_log_text, compare_logs, filter_events, summarize_bundle
 from engine.warcraft_engine import STANDARD_STAGE_DEFINITIONS, SimulationBundle
 from ui.block_workspace import BlockProgramEditor, BlockSpec, FieldSpec
 from ui.timeline_controller import TimelineController
 from ui.timeline_panel import TimelinePanel
+
+
+class AIAnalysisWorker(QObject):
+    progress = Signal(str)
+    finished = Signal(object)
+
+    def __init__(self, config, comparison: LogComparison, expected_text: str, actual_text: str) -> None:
+        super().__init__()
+        self.config = config
+        self.comparison = comparison
+        self.expected_text = expected_text
+        self.actual_text = actual_text
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            result = explain_log_mismatch(
+                self.config,
+                self.comparison,
+                expected_text=self.expected_text,
+                actual_text=self.actual_text,
+                progress=self.progress.emit,
+            )
+        except Exception as exc:
+            result = AIDebugResult(False, f"AI 分析线程异常: {exc}")
+        self.finished.emit(result)
 
 
 class Task3Widget(QWidget):
@@ -33,6 +59,8 @@ class Task3Widget(QWidget):
         self.imported_bundle: SimulationBundle | None = None
         self.last_comparison: LogComparison | None = None
         self.timeline_controller: TimelineController | None = None
+        self.ai_thread: QThread | None = None
+        self.ai_worker: AIAnalysisWorker | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -115,9 +143,9 @@ class Task3Widget(QWidget):
         self.ai_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.ai_key_edit.setPlaceholderText("填写 API Key，仅用于本次请求，不会保存")
         self.ai_model_override_edit = QLineEdit()
-        self.ai_model_override_edit.setPlaceholderText("可选：覆盖模型名，例如 deepseek-chat")
+        self.ai_model_override_edit.setPlaceholderText("可选：覆盖模型名，例如 deepseek-v4-flash 或 deepseek-v4-pro")
         self.ai_base_url_edit = QLineEdit()
-        self.ai_base_url_edit.setPlaceholderText("可选：OpenAI 兼容接口地址")
+        self.ai_base_url_edit.setPlaceholderText("可选：OpenAI 兼容 base URL，例如 https://api.deepseek.com")
         ai_layout.addRow("模型", self.ai_model_combo)
         ai_layout.addRow("API Key", self.ai_key_edit)
         ai_layout.addRow("模型名", self.ai_model_override_edit)
@@ -347,20 +375,53 @@ class Task3Widget(QWidget):
             self.ai_output.setPlainText(str(exc))
             return
 
-        self.ai_output.setPlainText("正在请求 AI 分析，请稍候...")
-        result = explain_log_mismatch(
-            config,
-            comparison,
-            expected_text=expected_text,
-            actual_text=actual_text,
-        )
+        self._start_ai_analysis(config, comparison, expected_text, actual_text)
+
+    def _start_ai_analysis(self, config, comparison: LogComparison, expected_text: str, actual_text: str) -> None:
+        if self.ai_thread is not None and self.ai_thread.isRunning():
+            self.ai_output.setPlainText("AI 正在思考中，请等待当前分析完成。")
+            return
+
+        self.ai_output.setPlainText("AI 正在思考中：准备发送差异摘要...")
+        self.ai_btn.setEnabled(False)
+        self.ai_btn.setText("AI 分析中...")
+
+        self.ai_thread = QThread(self)
+        self.ai_worker = AIAnalysisWorker(config, comparison, expected_text, actual_text)
+        self.ai_worker.moveToThread(self.ai_thread)
+        self.ai_thread.started.connect(self.ai_worker.run)
+        self.ai_worker.progress.connect(self._on_ai_progress)
+        self.ai_worker.finished.connect(self._on_ai_finished)
+        self.ai_worker.finished.connect(self.ai_thread.quit)
+        self.ai_worker.finished.connect(self.ai_worker.deleteLater)
+        self.ai_thread.finished.connect(self._cleanup_ai_thread)
+        self.ai_thread.start()
+
+    @Slot(str)
+    def _on_ai_progress(self, message: str) -> None:
+        self.ai_output.setPlainText(message)
+
+    @Slot(object)
+    def _on_ai_finished(self, result) -> None:
         if result.ok:
             self.ai_output.setPlainText(result.suggestion)
         else:
             self.ai_output.setPlainText(result.message + ("\n\n" + result.suggestion if result.suggestion else ""))
+
+    @Slot()
+    def _cleanup_ai_thread(self) -> None:
+        if self.ai_thread is not None:
+            self.ai_thread.deleteLater()
+        self.ai_thread = None
+        self.ai_worker = None
+        self.ai_btn.setText("AI 分析差异")
         self._refresh_ai_button_state()
 
     def _refresh_ai_button_state(self) -> None:
+        if self.ai_thread is not None and self.ai_thread.isRunning():
+            self.ai_btn.setEnabled(False)
+            self.ai_btn.setToolTip("AI 正在后台分析当前差异，请稍等。")
+            return
         has_expected = bool(self.expected_output.toPlainText().strip())
         has_mismatch = self.last_comparison is not None and not self.last_comparison.matched
         self.ai_btn.setEnabled(has_expected and has_mismatch)

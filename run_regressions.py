@@ -9,7 +9,12 @@ import tempfile
 from pathlib import Path
 
 from engine.class_manager import ClassManager
-from engine.ai_log_assistant import build_model_config, explain_log_mismatch, get_model_names
+from engine.ai_log_assistant import (
+    build_chat_completion_payload,
+    build_model_config,
+    explain_log_mismatch,
+    get_model_names,
+)
 from engine.task2_cpp_exporter import export_task2_cpp_project
 from engine.task3_log_helper import compare_logs, filter_events
 from engine.task1_validator import validate_warcraft_entities, validate_warrior_hierarchy
@@ -86,12 +91,17 @@ def check_ui_static_wiring() -> None:
             "self.manager.export_cpp_skeleton(directory)",
         ],
         "ui/task3_widget.py": [
+            "from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot",
             "from ui.timeline_panel import TimelinePanel",
             "self.timeline_controller = TimelineController(self.timeline_panel)",
-            "from engine.ai_log_assistant import build_model_config, explain_log_mismatch, get_model_names",
+            "from engine.ai_log_assistant import AIDebugResult, build_model_config, explain_log_mismatch, get_model_names",
             "self.ai_model_combo.addItems(get_model_names())",
             "self.ai_key_edit.setEchoMode(QLineEdit.EchoMode.Password)",
-            "result = explain_log_mismatch(",
+            "class AIAnalysisWorker(QObject):",
+            "progress = Signal(str)",
+            "self.ai_worker.progress.connect(self._on_ai_progress)",
+            "self.ai_thread = QThread(self)",
+            "progress=self.progress.emit",
             "self.ai_output.setPlainText(result.suggestion)",
         ],
     }
@@ -112,6 +122,18 @@ def check_ui_static_wiring() -> None:
     stale = [snippet for snippet in forbidden_mainwindow_snippets if snippet in files["ui/mainwindow.py"]]
     if stale:
         raise AssertionError(f"MainWindow still exposes standalone timeline wiring: {stale}")
+
+    task3_text = files["ui/task3_widget.py"]
+    run_ai_start = task3_text.index("    def run_ai_debug(self) -> None:")
+    start_ai_start = task3_text.index("    def _start_ai_analysis(")
+    run_ai_body = task3_text[run_ai_start:start_ai_start]
+    forbidden_sync_ai_snippets = [
+        "result = explain_log_mismatch(",
+        "urlopen(",
+    ]
+    stale_ai = [snippet for snippet in forbidden_sync_ai_snippets if snippet in run_ai_body]
+    if stale_ai:
+        raise AssertionError(f"Task3 AI button callback still runs synchronous AI work: {stale_ai}")
     print("[PASS] UI static wiring")
 
 
@@ -265,22 +287,33 @@ def check_task3_log_and_ai_helpers() -> None:
         raise AssertionError("Task3 mismatch comparison did not report the first differing line.")
 
     model_names = get_model_names()
-    if "DeepSeek Chat" not in model_names or "Codex / Custom OpenAI-Compatible" not in model_names:
+    if "DeepSeek V4 Flash" not in model_names or "DeepSeek V4 Pro (Thinking)" not in model_names:
         raise AssertionError(f"AI model presets are incomplete: {model_names}")
 
     ai_config = build_model_config(
         "Codex / Custom OpenAI-Compatible",
         "  test-key  ",
         model_override="custom-debug-model",
-        base_url_override="https://example.invalid/v1/chat/completions",
+        base_url_override="https://example.invalid/v1",
     )
     if ai_config.api_key != "test-key" or ai_config.model != "custom-debug-model":
         raise AssertionError("AI model config did not trim key or apply model override.")
+    if ai_config.chat_completions_url != "https://example.invalid/v1/chat/completions":
+        raise AssertionError("AI helper did not build the OpenAI-compatible chat completions URL.")
 
-    no_key = build_model_config("DeepSeek Chat", "")
+    no_key = build_model_config("DeepSeek V4 Flash", "")
     no_key_result = explain_log_mismatch(no_key, mismatched, expected_text=expected, actual_text=expected + "\nextra line")
     if no_key_result.ok or "API Key" not in no_key_result.message:
         raise AssertionError("AI helper should reject empty API keys before making a request.")
+
+    deepseek_config = build_model_config("DeepSeek V4 Pro (Thinking)", "test-key")
+    deepseek_payload = build_chat_completion_payload(deepseek_config, "debug prompt")
+    if deepseek_config.chat_completions_url != "https://api.deepseek.com/chat/completions":
+        raise AssertionError("DeepSeek base URL should follow the official OpenAI-compatible endpoint.")
+    if deepseek_payload.get("model") != "deepseek-v4-pro":
+        raise AssertionError("DeepSeek V4 Pro preset did not use the documented model id.")
+    if deepseek_payload.get("thinking") != {"type": "enabled"} or deepseek_payload.get("reasoning_effort") != "high":
+        raise AssertionError("DeepSeek thinking payload does not match the official API shape.")
 
     matched_result = explain_log_mismatch(ai_config, comparison, expected_text=expected, actual_text=expected)
     if not matched_result.ok or "完全一致" not in matched_result.message:
